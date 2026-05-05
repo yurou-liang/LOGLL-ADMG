@@ -30,9 +30,3 @@ done
 
 wait
 echo ">>> ✅ all jobs finished for d=${D}, a in (2 5 6 8 9 10 15 17 19 20), seeds 0–9"
-
-
-
-pkill -f run_experiments.py
-
-python src/DagmaDCE/run_experiments.py -realData y > logs/realData.log 2>&1

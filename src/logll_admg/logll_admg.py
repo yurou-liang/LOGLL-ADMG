@@ -64,7 +64,6 @@ class LOGLLADMG:
         try:
             L = torch.linalg.cholesky(Sigma_j)
         except RuntimeError:
-            # fallback: add more jitter dynamically
             Sigma_j = Sigma_j + 1e-2 * I
             L = torch.linalg.cholesky(Sigma_j)
 
@@ -107,12 +106,6 @@ class LOGLLADMG:
             checkpoint (int, optional): how often to checkpoint. Defaults to 1000.
             tol (float, optional): tolerance to terminate learning. Defaults to 1e-3.
         """
-        # optimizer = optim.Adam(
-        #     self.model.parameters(),
-        #     lr=lr,
-        #     betas=(0.99, 0.999),
-        #     weight_decay=mu * lambda2,
-        # )
 
         params_f = []
         params_sigma = []
@@ -125,7 +118,7 @@ class LOGLLADMG:
             else:
                 params_f.append(p)
 
-        lr_sigma = lr * 0.3  # can try 0.1, 0.03, etc.
+        lr_sigma = lr * 0.3  
         optimizer = optim.Adam(
             [
                 {"params": params_f,     "lr": lr,        "weight_decay": mu * lambda2},
@@ -140,15 +133,9 @@ class LOGLLADMG:
             optimizer, gamma=0.8 if lr_decay else 1.0
         )
 
-        # if freeze_Sigma:
-        #     self.model.M.requires_grad_(False)
-        # else:
-        #     self.model.M.requires_grad_(True)
-
         for i in range(max_iter):
             optimizer.zero_grad()
-            # if i == 0:
-            #     self.model.M.requires_grad_(True)
+
             if i == 0:
                 X_hat = self.model(self.X)
                 Sigma = self.model.get_Sigma()
@@ -161,23 +148,12 @@ class LOGLLADMG:
                 observed_hess = self.model.exact_hessian_diag_avg(self.X)
                 h_val = self.model.h_func(W_current, W2, s, g=self.graph_type)
                 nonlinear_reg = self.model.get_nonlinear_reg(observed_derivs_mean, observed_hess)
-                # print("Sigma: ", Sigma)
-                # print("obj: ", obj)
-                # print("mle loss: ", score)
-                # print("h_val: ", h_val)
-                # print("nonlinear_reg: ", nonlinear_reg)
-                # print("observed_derivs: ", observed_derivs_mean)
-                # print("observed_hess: ", observed_hess)
-                # print("mu: ", mu)
-                # print("W_current: ", W_current)
 
             else:
                 W_current, observed_derivs = self.model.get_graph(self.X)
                 observed_derivs_mean = observed_derivs.abs().mean(dim = 0)
                 observed_hess = self.model.exact_hessian_diag_avg(self.X)
                 Sigma = self.model.get_Sigma()
-                ##### new test
-                # Sigma = torch.eye(self.X.shape[1])
                 Wii = torch.diag(torch.diag(Sigma))
                 W2 = Sigma - Wii
                 h_val = self.model.h_func(W_current, W2, s, g=self.graph_type)
@@ -190,14 +166,8 @@ class LOGLLADMG:
 
                 l1_reg = lambda1 * self.model.get_l1_reg(observed_derivs)
                 nonlinear_reg = self.model.get_nonlinear_reg(observed_derivs_mean, observed_hess)
-                # W2_reg = 3*lambda1 * self.model.get_W2_reg(W2)
                 corr_reg = self.model.get_W2_reg(W2, lambda_corr)
-                sigma_reg = self.model.sigma_rel_reg(Sigma, lambda_diag=15*lambda1)
-
                 obj = mu * (score + indi*(l1_reg + corr_reg + lambda_nl*nonlinear_reg)) + indi_h*h_val
-                
-
-                # obj = mu * (score + l1_reg) + h_val
 
                 if i % 1000 == 0:
                     print("Sigma: ", Sigma)
@@ -208,7 +178,6 @@ class LOGLLADMG:
                     print("h_val: ", h_val)
                     print("nonlinear_reg: ", nonlinear_reg)
                     print("observed_derivs: ", observed_derivs_mean)
-                    # print("W_current.T: ", W_current.T)
                     print("observed_hess: ", observed_hess)
                     print("mu: ", mu)
 
@@ -218,19 +187,17 @@ class LOGLLADMG:
 
             optimizer.step()
 
-            # Immediately check params
             with torch.no_grad():
                 bad = False
                 for name, p in self.model.named_parameters():
                     if p is None: 
                         continue
                     if torch.isnan(p).any() or torch.isinf(p).any():
-                        print(f"⚠️ NaN/Inf in parameter {name}")
+                        print(f" NaN/Inf in parameter {name}")
                         bad = True
                 if bad:
-                    return False  # trigger rollback / lr reduce
+                    return False  
             
-
             if lr_decay and (i + 1) % 1000 == 0:
                 scheduler.step()
 
@@ -289,13 +256,10 @@ class LOGLLADMG:
                 lr_decay = False
 
                 inner_iter = int(max_iter) if i == T - 1 else int(warm_iter)
-                # indi_h =0.05 if i == T-1 else 1.0 
-                # indi_i = 0.0 if i == T - 1 else indi
                 indi_h = 1.0
                 indi_i = 1.0
 
                 model_copy = copy.deepcopy(self.model)
-                # freeze_Sigma = True if i == 0 else False
                 while success is False:
                     success = self.minimize(
                         inner_iter,
@@ -322,7 +286,6 @@ class LOGLLADMG:
                             break  # lr is too small
 
                     mu *= mu_factor
-                    # indi *= 0.7
 
             Sigma = self.model.get_Sigma()
             Wii = torch.diag(torch.diag(Sigma))
@@ -336,14 +299,10 @@ def SPDLogCholesky(M: torch.tensor)-> torch.Tensor:
     """
     Use LogCholesky decomposition that map a matrix M to a SPD Sigma matrix.
     """
-    # Take strictly lower triangular matrix
     M_strict = M.tril(diagonal=-1)
     d,_ = M_strict.shape
-    # Make matrix with exponentiated diagonal
     D = M.diag()
-    # Make the Cholesky decomposition matrix
     L = M_strict + torch.diag(torch.exp(D))
-    # Invert the Cholesky decomposition
     Sigma = torch.matmul(L, L.t())
     return Sigma
 
@@ -351,13 +310,9 @@ def reverse_SPDLogCholesky(Sigma: torch.tensor)-> torch.Tensor:
     """
     Reverse the LogCholesky decomposition that map the SPD Sigma matrix to the matrix M.
     """
-    # Compute the Cholesky decomposition
     L = torch.linalg.cholesky(Sigma)
-    # Take strictly lower triangular matrix
     M_strict = L.tril(diagonal=-1)
-    # Take the logarithm of the diagonal
     D = torch.diag(torch.log(L.diag()))
-    # Return the log-Cholesky parametrization
     M = M_strict + D
     return M
 
@@ -406,42 +361,19 @@ class LOGLLADMG_MLP(LOGLLADMG_Module):
         self.M = nn.Parameter(self.M)
 
         self.fc1 = nn.Linear(self.d, self.d * dims[1], bias=bias) # [d * dims[1], d]
-        # self.fc1.weight.bounds = self._bounds()
         self.mask = torch.ones(self.d * dims[1], self.d)
 
         for j in range(self.d):
             self.mask[j * dims[1]:(j + 1) * dims[1], j] = 0.0+1e-6
 
-        # self.fc1 = MaskedLinear(self.d, self.d * dims[1], mask, bias=bias)
-        # self.fc1 = nn.Linear(self.d, self.d * dims[1], bias=bias)
-
-        # with torch.no_grad():
-        #     self.fc1.weight *= mask
-
-        # nn.init.zeros_(self.fc1.weight)
         nn.init.xavier_uniform_(self.fc1.weight)
-        # self.fc1.weight.data *= self.fc1.mask   # enforce mask after init
         nn.init.zeros_(self.fc1.bias)
 
         layers = []
         for l in range(len(dims) - 2):
             layers.append(LocallyConnected(self.d, dims[l + 1], dims[l + 2], bias=bias))
-            # Each dimension d has a separate weight to learn
 
         self.fc2 = nn.ModuleList(layers)
-
-    # def _bounds(self):
-    #     d = self.dims[0]
-    #     bounds = []
-    #     for j in range(d):
-    #         for m in range(self.dims[1]):
-    #             for i in range(d):
-    #                 if i == j:
-    #                     bound = (0, 0)
-    #                 else:
-    #                     bound = (0, None)
-    #                 bounds.append(bound)
-    #     return bounds
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass of the sigmoidal feedforward NN
@@ -452,19 +384,15 @@ class LOGLLADMG_MLP(LOGLLADMG_Module):
         Returns:
             torch.Tensor: output
         """
-        # x = self.fc1(x) # [n, self.d * dims[1]]
         weight = self.fc1.weight*self.mask #[d * dims[1], d]
         x = x@(weight.T) 
         if self.fc1.bias is not None:
             x = x + self.fc1.bias.unsqueeze(0)
 
         x = x.view(-1, self.dims[0], self.dims[1]) # [n, d, self.dims[1]]
-
-        # self.activation = nn.SiLU()
         self.activation = nn.Sigmoid()
 
         for fc in self.fc2:
-            # x = torch.sigmoid(x)
             x = self.activation(x)
             x = fc(x) # [n, d, self.dims[2]]
 
@@ -472,19 +400,7 @@ class LOGLLADMG_MLP(LOGLLADMG_Module):
 
         return x
     
-    # freeze diagonal
-    # def get_Sigma(self)-> torch.Tensor:
-
-    #     Sigma0 = SPDLogCholesky(self.M)
-    #     eps = 1e-12
-    #     diag_current = torch.diag(Sigma0)
-    #     scale = torch.sqrt(self.sigma_diag_target / (diag_current + eps))
-    #     D = torch.diag(scale)
-    #     Sigma = D @ Sigma0 @ D
-    #     return Sigma
-    
-    # make diagonal hard to move
-    def get_Sigma(self, gamma=0):     # γ in [0, 1]
+    def get_Sigma(self, gamma=0):     
         """
         gamma = 0 → free variances
         gamma = 1 → variances fixed to diag0
@@ -493,23 +409,10 @@ class LOGLLADMG_MLP(LOGLLADMG_Module):
 
         eps = 1e-12
         diag_current = torch.diag(Sigma0)   # [d]
-
-        # compute scaling coefficients
         scale = (self.sigma_diag_target / (diag_current + eps)).pow(0.5 * gamma)
         D = torch.diag(scale)
-
-        # congruence transform
         Sigma = D @ Sigma0 @ D
         return Sigma
-    
-    # def get_Sigma(self):     # γ in [0, 1]
-    #     """
-    #     gamma = 0 → free variances
-    #     gamma = 1 → variances fixed to diag0
-    #     """
-    #     Sigma = SPDLogCholesky(self.M)     # [d, d], SPD
-    #     return Sigma
-
 
     def get_graph(self, x: torch.Tensor) -> torch.Tensor:
         """Get the adjacency matrix defined by the DCE and the batched Jacobian
@@ -531,7 +434,6 @@ class LOGLLADMG_MLP(LOGLLADMG_Module):
             -1, self.d, self.d
         )#[n, d, d], observed_deriv[i, j, k]=for ith sample, derivative of f_j wrt x_k
 
-        # Adjacency matrix is RMS Jacobian
         W = torch.sqrt(torch.mean(observed_deriv**2, axis=0).T) #[d, d]
 
         if torch.isnan(observed_deriv).any():
@@ -551,23 +453,16 @@ class LOGLLADMG_MLP(LOGLLADMG_Module):
         out = torch.zeros(d, d, device=device)
         total = 0
 
-        # per-sample wrapper so higher-order AD sees [d] -> [d]
         def f_single(x1):  # x1: [d] -> [d]
             return self.forward(x1.unsqueeze(0)).squeeze(0)
-
-        # scalarization: s(x; u) = <u, f(x)>, Hess_x s with u = e_k gives Hessian of f_k
         def s(x1, u1):
             return (f_single(x1) * u1).sum()
-
-        # Hessian wrt x only (treat u as constant)
         hess_x = torch.func.hessian(s, argnums=0)  # (x1, u1) -> [d, d]
-        I = torch.eye(d, device=device)            # unit vectors e_k as rows
-
-        # For one sample: stack all outputs' Hessians -> [d(outputs), d, d]
+        I = torch.eye(d, device=device)            
         def hess_all_outputs_for_sample(xi):
             return torch.func.vmap(lambda u: hess_x(xi, u), in_dims=0)(I)  # [d, d, d]
 
-        with torch.no_grad():  # we only need numbers, not a backward graph
+        with torch.no_grad():  
             for start in range(0, n, batch_size):
                 xb = x[start:start+batch_size].detach().to(device).requires_grad_(True)
                 # Map over the minibatch: [B, d, d, d]
@@ -590,11 +485,6 @@ class LOGLLADMG_MLP(LOGLLADMG_Module):
         Returns:
             torch.Tensor: constraint
         """
-        # A = s * self.I - W1 * W1
-        # print("A min diag:", A.diag().min().item())
-        # print("A max diag:", A.diag().max().item())
-        # print("||A||_F =", torch.linalg.norm(A).item())
-
         cycle_loss = -torch.slogdet(s * self.I - W1 * W1)[1] + self.d * np.log(s)
 
         return cycle_loss
@@ -658,34 +548,11 @@ class LOGLLADMG_MLP(LOGLLADMG_Module):
         return torch.sum(torch.abs(torch.mean(observed_derivs, axis=0)))
     
     def get_nonlinear_reg(self, observed_derivs, observed_hess, m=1e-1):
-        # constants on the right device/dtype
         m_t = torch.as_tensor(m, device=observed_hess.device, dtype=observed_hess.dtype)
-
-        # encourage |H| >= m where |J| is large
-        # detach H so we don't backprop through second→third order
         gap = torch.clamp_min(m_t - observed_hess.abs(), 0.0)  # [d, d]
-
-        # broadcast over batch n; penalty per (sample, j, k)
         penalty = observed_derivs.abs() * gap  # [n, d, d]
 
         return penalty.sum()
-
-    # def get_nonlinear_reg(self, observed_derivs, observed_hess, m=1e-1, tau=1e-2):
-    #     # mask: where the derivative is meaningfully nonzero (edge exists)
-    #     # use J only as a mask, without gradient
-    #     J_mean = observed_derivs.abs().mean(dim=0).detach()   # [d, d]
-    #     mask = (J_mean > tau).float()                         # 1 where edge is active
-
-    #     m_t = torch.as_tensor(m, device=observed_hess.device, dtype=observed_hess.dtype)
-
-    #     # DO NOT detach H here: we want gradient to push curvature up
-    #     gap = torch.clamp_min(m_t - observed_hess.abs(), 0.0)  # [d, d]
-
-    #     # penalty: where mask=1 and curvature is too small
-    #     penalty = (mask * gap).sum()
-
-    #     return penalty
-
 
     def get_W2_reg(self, W2: torch.Tensor, lambda_corr: float) -> torch.Tensor:
 
@@ -699,13 +566,3 @@ class LOGLLADMG_MLP(LOGLLADMG_Module):
         off_corr = Corr - torch.eye(d, device=Sigma.device, dtype=Sigma.dtype)
         corr_sparsity = lambda_corr * off_corr.abs().sum()
         return corr_sparsity
-
-    def sigma_rel_reg(self, Sigma: torch.Tensor, lambda_diag: float = 1e-3) -> torch.Tensor:
-        """
-        Penalize relative spread of log-variances: encourages diag(Sigma)
-        to be on a similar scale across nodes, without fixing it to 1.
-        """
-        diag = torch.diag(Sigma)
-        log_diag = torch.log(diag + 1e-12)
-        mean_log = log_diag.mean().detach()
-        return lambda_diag * ((log_diag - mean_log) ** 2).sum()
