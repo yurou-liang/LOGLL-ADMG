@@ -35,8 +35,8 @@ def generate_ancestral_admg(d, p_dir=0.4, p_bidir=0.3, seed=None):
         rng = np.random.RandomState(seed)
 
     # --- Step 1: generate a DAG (acyclic directed structure)
-    A_dir = np.triu((rng.random((d, d)) < p_dir).astype(int), 1) # generate random 0/1 matrix with edge prob p_dir, keep only upper triangular part for acyclicty
-    dag = {j: list(np.where(A_dir[:, j] == 1)[0]) for j in range(d)} # for each child j, take the indices i where A_dir[i, j] == 1 (i.e., it's parents)
+    A_dir = np.triu((rng.random((d, d)) < p_dir).astype(int), 1)
+    dag = {j: list(np.where(A_dir[:, j] == 1)[0]) for j in range(d)} 
 
     # --- Step 2: precompute ancestors of each node (for the ancestral constraint)
     ancestors = {j: set() for j in range(d)}
@@ -45,16 +45,15 @@ def generate_ancestral_admg(d, p_dir=0.4, p_bidir=0.3, seed=None):
         while stack:
             parent = stack.pop()
             ancestors[j].add(parent)
-            stack.extend(dag[parent])  # recursively include higher ancestors
+            stack.extend(dag[parent])  
 
     # --- Step 3: generate bidirected edges that respect ancestrality
     A_bidir = np.zeros((d, d), dtype=int)
     for i in range(d):
         for j in range(i + 1, d):
             if rng.random() < p_bidir:
-                # Check ancestral condition: i not ancestor of j, j not ancestor of i
                 if i not in ancestors[j] and j not in ancestors[i]:
-                    A_bidir[i, j] = A_bidir[j, i] = 1  # add bidirected edge
+                    A_bidir[i, j] = A_bidir[j, i] = 1  
 
     # --- Step 4: return graph as dict
     admg = {
@@ -137,7 +136,6 @@ def generate_layers(d, dims, admg, seed=None):
     init_union_uniform_(fc1.weight, generator=g)
     if fc1.bias is not None:
         init_union_uniform_(fc1.bias, generator=g)
-    # self.fc1.weight.bounds = self._bounds()
     mask = torch.ones(d * dims[1], d)
 
     for j in range(d):
@@ -156,12 +154,6 @@ def generate_layers(d, dims, admg, seed=None):
     fc2 = nn.ModuleList(layers)
     return fc1, fc2, mask
 
-def scale_weights(model, factor=10):
-    with torch.no_grad():
-        for param in model.parameters():
-            if param.ndim > 1:  # Skip bias
-                param.mul_(factor)
-
 def forward(dims, fc1, fc2, mask, x: torch.Tensor) -> torch.Tensor:
     """Forward pass of the sigmoidal feedforward NN
 
@@ -171,19 +163,15 @@ def forward(dims, fc1, fc2, mask, x: torch.Tensor) -> torch.Tensor:
     Returns:
         torch.Tensor: output
     """
-    # x = self.fc1(x) # [n, self.d * dims[1]]
     weight = fc1.weight*mask #[d * dims[1], d]
     x = x@(weight.T) 
     if fc1.bias is not None:
         x = x + fc1.bias.unsqueeze(0)
 
     x = x.view(-1, dims[0], dims[1]) # [n, d, self.dims[1]]
-
-    # self.activation = nn.SiLU()
     activation = nn.Sigmoid()
 
     for fc in fc2:
-        # x = torch.sigmoid(x)
         x = activation(x)
         x = fc(x) # [n, d, self.dims[2]]
 
@@ -206,7 +194,6 @@ def generate_covariance(A_bidir, low=0.4, high=0.8, seed=None):
         for j in range(i+1, d):
             if A_bidir[i, j]:
                 val = rng.uniform(low, high)
-                # Randomly flip sign for variety (optional)
                 if rng.random() < 0.5:
                     val = -val
                 R[i, j] = R[j, i] = val
@@ -225,7 +212,6 @@ def generate_covariance(A_bidir, low=0.4, high=0.8, seed=None):
     D_inv = np.diag(1 / np.sqrt(np.diag(R)))
     Sigma = D_inv @ R @ D_inv
 
-    # Final check
     eigvals = np.linalg.eigvalsh(Sigma)
     if np.min(eigvals) <= 0:
         # small diagonal correction if needed
@@ -241,14 +227,9 @@ def reverse_SPDLogCholesky(Sigma: torch.tensor)-> torch.Tensor:
     """
     Reverse the LogCholesky decomposition that map the SPD Sigma matrix to the matrix M.
     """
-    # Compute the Cholesky decomposition
-    # Sigma = torch.tensor(Sigma)
     L = torch.linalg.cholesky(Sigma)
-    # Take strictly lower triangular matrix
     M_strict = L.tril(diagonal=-1)
-    # Take the logarithm of the diagonal
     D = torch.diag(torch.log(L.diag()))
-    # Return the log-Cholesky parametrization
     M = M_strict + D
     return M
 
@@ -268,15 +249,11 @@ def generate_from_epsilon(dims, epsilon, fc1, fc2, mask, parents, order):
 
     for j in order:
         if len(parents[j]) == 0:
-            # root node: only noise
             X[:, j] = epsilon[:, j]
         else:
-            # prepare partial input with parents filled
             x_partial = torch.zeros(n, d, dtype=epsilon.dtype)
             for p in parents[j]:
                 x_partial[:, p] = X[:, p]
-
-            # compute all f_j(x) in parallel, then pick j-th column
             f_out = forward(dims, fc1, fc2, mask, x_partial)  # [n, d]
             X[:, j] = f_out[:, j] + epsilon[:, j]
 
@@ -307,7 +284,6 @@ def sample_edge_mechanisms(parents):
       edge_func_name: dict {(k, i): function_name}
       edge_weight: dict {(k, i): weight}
     """
-    # rng = np.random.RandomState(seed)
 
     func_names = ["exp", "tanh", "sin"]
 
@@ -317,8 +293,6 @@ def sample_edge_mechanisms(parents):
     for i, pa_i in parents.items():
         for k in pa_i:
             edge_func_name[(k, i)] = np.random.choice(func_names)
-
-            # sample sign first, then magnitude
             sign = np.random.choice([-1.0, 1.0])
             magnitude = np.random.uniform(2, 3)
             edge_weight[(k, i)] = float(sign * magnitude)
@@ -427,8 +401,6 @@ def generate_confounder_layers_from_admg(d, dims_u, admg, seed=None):
         init_union_uniform_(fc1_u.bias, low=1.5, high=2.0)
 
     mask_u = torch.ones(d * dims_u[1], d)
-
-    # node j is only allowed to use spouse-columns
     for j in range(d):
         allowed_spouses = admg[j]["spouses"]
         not_spouses = [k for k in range(d) if k not in allowed_spouses]
@@ -585,8 +557,6 @@ if __name__ == "__main__":
 
     if args.realData == "y":
         data, labels = load_dataset("sachs")
-
-        # make column names match bnlearn convention
         rename = {
             "pka": "PKA",
             "pkc": "PKC",
@@ -668,9 +638,6 @@ if __name__ == "__main__":
             epsilon = torch.tensor(epsilon)
             dims=[args.d, 100, 1]
             fc1, fc2, mask = generate_layers(args.d, dims, admg, seed = args.s)
-            # scale_weights(fc1, factor=10)
-            # for layer in fc2:
-            #     scale_weights(layer, factor=15)
             X_truth = generate_from_epsilon(dims, epsilon, fc1, fc2, mask, parents, order).detach()
             J = vmap(jacrev(f))(X_truth)    # shape [n_samples, d, d]
             X = X_truth - epsilon
@@ -733,7 +700,7 @@ if __name__ == "__main__":
             J = vmap(jacrev(f_x_single))(X_truth) 
             F_x = compute_f_of_X(dims, fc1_x, fc2_x, mask_x, X_truth, parents)
             X = F_x
-            R = X_truth - F_x   # this is g(U) + epsilon
+            R = X_truth - F_x  
             Sigma_truth = sample_cov(R)
         else:
             raise ValueError(f"Unsupported function type: {args.f}")
@@ -754,10 +721,8 @@ if __name__ == "__main__":
         'X': X.detach().cpu().numpy().tolist(),
         'epsilon': epsilon.detach().cpu().numpy().tolist(),
         'W_truth': W_truth.detach().cpu().numpy().tolist(),
-        # 'W_start': W_truth_start.detach().cpu().numpy().tolist(),
         "Sigma_truth": Sigma_truth.tolist(),
         "M_truth": M_truth.detach().cpu().tolist(),
-        # 'h_val_truth': h_val_truth.item(),
         'mle_loss_truth': mle_loss_truth.detach().cpu().tolist(),
         "random_runs": []
         }
@@ -771,24 +736,6 @@ if __name__ == "__main__":
 
     for i in range(n_restarts):
         print(f"\n=== Random restart {i+1}/{n_restarts} ===")
-
-        # eq_model = nonlinear.DagmaMLP(
-        # dims=[args.d, 10, 1], bias=True, dtype=torch.double)
-        # model = nonlinear.DagmaNonlinear(
-        #     eq_model, dtype=torch.double, use_mse_loss=True)
-
-        # W_est_dagma_with_h, X_est = model.fit(X_truth, lambda1=2e-2, lambda2=0.005,
-        #                         T=5, lr=2e-4, w_threshold=0.3, mu_init=1, warm_iter=70000, max_iter=80000, consider_h=True)
-
-        
-        # E = X_truth - X_est
-        # E_centered = E - E.mean(dim=0, keepdim=True)
-        # var_mle = (E_centered ** 2).mean(dim=0)
-        # var_max = var_mle.max()
-        # var_mle_const = var_max.repeat(var_mle.shape[0])
-
-        # ✅ detach + clone for safety (important for deepcopy)
-        # var_mle_const = var_mle_const.detach().clone()
 
         run_start_time = time.perf_counter()
         eq_model = nonlinear.DagmaMLP(
@@ -805,8 +752,6 @@ if __name__ == "__main__":
         fc2_weight_random = eq_model.fc2[0].weight
         fc2_bias_random= eq_model.fc2[0].bias
 
-        # eq_model = nonlinear_dce.LOGLLADMG_MLP(
-        #     dims=[args.d, 10, 1], diag0= var_mle_const, bias=True)
         eq_model = logll_admg.LOGLLADMG_MLP(
             dims=[args.d, 10, 1], bias=True)
         model = logll_admg.LOGLLADMG(eq_model, use_mle_loss=True, graph_type=args.g)
@@ -840,7 +785,6 @@ if __name__ == "__main__":
         run_result = {
             "run_id": i,
             "h_val_random": float(h_val_random.item()),
-            # "var_mle_const": var_mle_const.detach().cpu().tolist(),
             "mle_loss_random_start": float(mle_loss_random_start.detach().cpu().item()),
             "mle_loss_random_end": float(mle_loss_random_end.detach().cpu().item()),
             "W_est_random": W_est_random.detach().cpu().tolist(),
@@ -858,13 +802,6 @@ if __name__ == "__main__":
             "fc2_bias_random_end": fc2_bias_random_end.detach().cpu().tolist(),
         }
         results["random_runs"].append(run_result)
-
-        # if np.isfinite(mle_val) and mle_val < best_mle_loss:
-        #     best_mle_loss = mle_val
-        #     best_random = run_result
-
-        # results["best_random_run"] = best_random
-
 
         with open(filename, 'w') as file:
             json.dump(results, file, indent=4) 
