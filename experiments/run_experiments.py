@@ -1,11 +1,11 @@
-from logll_admg import nonlinear
-from logll_admg import logll_admg
+from gll_admg import nonlinear
+from gll_admg import gll_admg
 import torch
 import numpy as np
 import networkx as nx
 import pandas as pd
 import torch.nn as nn
-from logll_admg.locally_connected import LocallyConnected
+from gll_admg.locally_connected import LocallyConnected
 import json
 import argparse
 import random
@@ -537,7 +537,7 @@ def dag_to_admg_with_hidden_common_cause(dag_parents, hidden_node, observed_node
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(prog='test LOGLL-ADMG',)
+    parser = argparse.ArgumentParser(prog='test GLL-ADMG',)
 
     parser.add_argument('-realData', default="n", type=str)
     parser.add_argument('-d', '--num_nodes', dest='d', default=4, type=int)
@@ -746,15 +746,15 @@ if __name__ == "__main__":
         W_est_dagma_random = model.fit(X_truth, lambda1=2e-2, lambda2=0.005,
                                 T=1, lr=2e-4, w_threshold=0.3, mu_init=1, warm_iter=70000, max_iter=80000, consider_h=False)
 
-        # Use DAGMA weights as initial weights for LOGLL-ADMG
+        # Use DAGMA weights as initial weights for GLL-ADMG
         fc1_weight_random = eq_model.fc1.weight
         fc1_bias_random = eq_model.fc1.bias
         fc2_weight_random = eq_model.fc2[0].weight
         fc2_bias_random= eq_model.fc2[0].bias
 
-        eq_model = logll_admg.LOGLLADMG_MLP(
+        eq_model = gll_admg.GLLADMG_MLP(
             dims=[args.d, 10, 1], bias=True)
-        model = logll_admg.LOGLLADMG(eq_model, use_mle_loss=True, graph_type=args.g)
+        model = gll_admg.GLLADMG(eq_model, use_mle_loss=True, graph_type=args.g)
         eq_model.fc1.weight = fc1_weight_random
         eq_model.fc1.bias = fc1_bias_random
         eq_model.fc2[0].weight = fc2_weight_random

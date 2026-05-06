@@ -12,7 +12,7 @@ import math
 import torch.nn.functional as F
 
 
-class LOGLLADMG_Module(nn.Module, abc.ABC):
+class GLLADMG_Module(nn.Module, abc.ABC):
     @abc.abstractmethod
     def get_graph(self, x: torch.Tensor) -> torch.Tensor:
         ...
@@ -26,12 +26,12 @@ class LOGLLADMG_Module(nn.Module, abc.ABC):
         ...
 
 
-class LOGLLADMG:
-    def __init__(self, model: LOGLLADMG_Module, use_mle_loss=True, graph_type="ancestral"):
-        """Initializes a LOGLLADMG model. Requires a `LOGLLADMG_Module`
+class GLLADMG:
+    def __init__(self, model: GLLADMG_Module, use_mle_loss=True, graph_type="ancestral"):
+        """Initializes a GLLADMG model. Requires a `GLLADMG_Module`
 
         Args:
-            model (LOGLLADMG_Module): module implementing adjacency matrix,
+            model (GLLADMG_Module): module implementing adjacency matrix,
                 h_func constraint, and L1 regularization
             use_mse_loss (bool, optional): to use MSE loss instead of log MSE loss.
                 Defaults to True.
@@ -229,7 +229,7 @@ class LOGLLADMG:
         lr: float = 1e-3,
         disable_pbar: bool = False,
     ) -> torch.Tensor:
-        """Fits the LOGLL-ADMG model
+        """Fits the GLL-ADMG model
 
         Args:
             X (torch.Tensor): inputs
@@ -327,7 +327,7 @@ class MaskedLinear(nn.Linear):
     def forward(self, input):
         return F.linear(input, self.weight * self.mask, self.bias)
     
-class LOGLLADMG_MLP(LOGLLADMG_Module):
+class GLLADMG_MLP(GLLADMG_Module):
     def __init__(
         self,
         dims: typing.List[int],
@@ -335,7 +335,7 @@ class LOGLLADMG_MLP(LOGLLADMG_Module):
         bias: bool = True,
         dtype: torch.dtype = torch.double,
     ):
-        """Initializes the LOGLLADMG MLP module
+        """Initializes the GLLADMG MLP module
 
         Args:
             dims (typing.List[int]): dims
@@ -344,7 +344,7 @@ class LOGLLADMG_MLP(LOGLLADMG_Module):
         """
         torch.set_default_dtype(dtype)
 
-        super(LOGLLADMG_MLP, self).__init__()
+        super(GLLADMG_MLP, self).__init__()
 
         assert len(dims) >= 2
         assert dims[-1] == 1
