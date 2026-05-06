@@ -1,12 +1,12 @@
 # Likelihood-Based Nonparametric Causal Discovery under Latent Confounding
 
-This repository contains the code for the algorithm LOGLL-ADMG in the paper "Likelihood-Based Nonparametric Causal Discovery under Latent Confounding".
+This repository contains the code for the algorithm GLL-ADMG in the paper "Likelihood-Based Nonparametric Causal Discovery under Latent Confounding".
 
 ## Structure
 
 ```text
-src/logll_admg/
-    logll_admg.py          # LOGLL-ADMG model 
+src/gll_admg/
+    gll_admg.py            # GLL-ADMG model 
     nonlinear.py           # DAGMA initialization model
     locally_connected.py   # Locally connected neural network layer
     utils.py               # Utility functions for DAGMA model
