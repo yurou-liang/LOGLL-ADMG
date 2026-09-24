@@ -127,6 +127,45 @@ def generate_bowfree_admg(d, p_dir=0.4, p_bidir=0.3, seed=None):
 
     return admg, A_dir, A_bidir
 
+def generate_non_bowfree_admg(d, p_dir=0.4, p_bidir=0.3, seed=None):
+    """
+    Generate an ADMG that allows bows and guarantees at least one bow (i -> j and i <-> j for some pair).
+    Directed edges are kept acyclic (upper-triangular). Bidirected edges are sampled independently,
+    then we force at least one bow if none was created naturally.
+    Returns (admg, A_dir, A_bidir).
+    """
+    rng = np.random.RandomState(seed) if seed is not None else np.random.RandomState()
+
+    # directed edges (acyclic)
+    A_dir = np.triu((rng.random((d, d)) < p_dir).astype(int), 1)
+
+    # bidirected edges (sample independently, bows allowed)
+    A_bidir = np.zeros((d, d), dtype=int)
+    for i in range(d):
+        for j in range(i + 1, d):
+            if rng.random() < p_bidir:
+                A_bidir[i, j] = 1
+                A_bidir[j, i] = 1
+
+    # ensure at least one bow exists
+    bows = [(i, j) for i in range(d) for j in range(i + 1, d) if A_dir[i, j] == 1 and A_bidir[i, j] == 1]
+    if len(bows) == 0:
+        # prefer to turn an existing directed edge into a bow by adding a bidirected edge
+        dir_edges = [(i, j) for i in range(d) for j in range(i + 1, d) if A_dir[i, j] == 1]
+        if len(dir_edges) > 0:
+            i, j = dir_edges[rng.randint(len(dir_edges))]
+            A_bidir[i, j] = A_bidir[j, i] = 1
+    
+    admg = {
+        j: {
+            "parents": [int(i) for i in np.where(A_dir[:, j] == 1)[0]],
+            "spouses": [int(i) for i in np.where(A_bidir[j, :] == 1)[0]],
+        }
+        for j in range(d)
+    }
+
+    return admg, A_dir, A_bidir
+
 def generate_layers(d, dims, admg, seed=None):
     if seed is not None:
         g = torch.Generator()
@@ -534,6 +573,101 @@ def dag_to_admg_with_hidden_common_cause(dag_parents, hidden_node, observed_node
 
     return admg, node_to_idx
 
+def sample_multivariate_t(n_samples, covariance, df=5, t_scale_range=(0.5, 1.0)):
+    covariance = np.asarray(covariance, dtype=float)
+
+    if df <= 2:
+        raise ValueError("df must be greater than 2 to define covariance.")
+
+    if covariance.ndim != 2 or covariance.shape[0] != covariance.shape[1]:
+        raise ValueError("covariance must be a square matrix.")
+
+    dimension = covariance.shape[0]
+
+    t_scales = np.random.uniform(
+            low=t_scale_range[0],
+            high=t_scale_range[1],
+            size=dimension
+        )
+
+    epsilon = np.random.standard_t(
+        df=df, size=(n_samples, dimension)
+    ) * t_scales
+
+    for i in range(dimension):
+        for j in range(i + 1, dimension):
+            covariance_ij = covariance[i, j]
+            if covariance_ij == 0:
+                continue
+
+            z_ij = np.random.normal(size=n_samples)
+            a = np.sqrt(abs(covariance_ij))
+            b = np.sign(covariance_ij) * a
+
+            epsilon[:, i] += a * z_ij
+            epsilon[:, j] += b * z_ij
+
+    residual_variance = t_scales**2 * df / (df - 2)
+    shared_variance = np.sum(np.abs(covariance), axis=1) - np.abs(np.diag(covariance))
+
+    epsilon_cov = covariance.copy()
+    epsilon_cov[np.diag_indices(dimension)] = shared_variance + residual_variance
+
+    return epsilon, epsilon_cov
+
+def sample_multivariate_gamma(
+    n_samples, covariance, shape=2.0, gamma_scale_range=(0.8, 1.0)
+):
+    """Sample centered skewed noise with the requested off-diagonal covariance.
+
+    Each marginal has an independent centered Gamma residual. Pairwise shared
+    standard-normal variables create the off-diagonal covariances, using the
+    same construction as :func:`sample_multivariate_t`.
+    """
+    covariance = np.asarray(covariance, dtype=float)
+
+    if shape <= 0:
+        raise ValueError("shape must be greater than 0.")
+
+    if covariance.ndim != 2 or covariance.shape[0] != covariance.shape[1]:
+        raise ValueError("covariance must be a square matrix.")
+
+    dimension = covariance.shape[0]
+    gamma_scales = np.random.uniform(
+        low=gamma_scale_range[0],
+        high=gamma_scale_range[1],
+        size=dimension,
+    )
+
+    # Centering preserves Gamma skewness while making E[epsilon] = 0.
+    epsilon = (
+        np.random.gamma(shape=shape, scale=1.0, size=(n_samples, dimension))
+        - shape
+    ) * gamma_scales
+
+    for i in range(dimension):
+        for j in range(i + 1, dimension):
+            covariance_ij = covariance[i, j]
+            if covariance_ij == 0:
+                continue
+
+            z_ij = np.random.normal(size=n_samples)
+            a = np.sqrt(abs(covariance_ij))
+            b = np.sign(covariance_ij) * a
+
+            epsilon[:, i] += a * z_ij
+            epsilon[:, j] += b * z_ij
+
+    residual_variance = shape * gamma_scales**2
+    shared_variance = (
+        np.sum(np.abs(covariance), axis=1) - np.abs(np.diag(covariance))
+    )
+
+    epsilon_cov = covariance.copy()
+    epsilon_cov[np.diag_indices(dimension)] = shared_variance + residual_variance
+
+    return epsilon, epsilon_cov
+
 
 
 if __name__ == "__main__":
@@ -545,6 +679,7 @@ if __name__ == "__main__":
     parser.add_argument('-s', '--seed', dest='s',  default=42, type=int)
     parser.add_argument('-a', '--admg', dest='a',  default=3, type=int)
     parser.add_argument('-f', '--function', dest='f', default="MLP", type=str)
+    parser.add_argument('-e', '--noise', dest='e', default="Gaussian", type=str)
     parser.add_argument('-T', '--num_iterations', dest='T', default=5, type=int)
     parser.add_argument('-lambda1', default=0.001, type=float)
     parser.add_argument('-lambda_corr', default=0.1, type=float)
@@ -620,6 +755,9 @@ if __name__ == "__main__":
         elif args.g == "bowfree":
             print(f'>>> Generating Bow-free ADMG <<<')
             admg, A_dir, A_bidir = generate_bowfree_admg(args.d, p_dir=1/(args.d-1), p_bidir=1/(args.d-1), seed=args.a)
+        elif args.g == "nonbowfree":
+            print(f'>>> Generating Non-Bow-free ADMG <<<')
+            admg, A_dir, A_bidir = generate_non_bowfree_admg(args.d, p_dir=1/(args.d-1), p_bidir=1/(args.d-1), seed=args.a)
         print("admg: ", admg)
         parents = {j: admg[j]['parents'] for j in admg}
         G = nx.DiGraph()
@@ -629,13 +767,26 @@ if __name__ == "__main__":
         order = list(nx.topological_sort(G))
 
         n_samples = 2000 
+        Sigma_truth = generate_covariance(A_bidir, seed=args.s)
+        if args.e == "Gaussian":
+            print(f'>>> Generating Data with Gaussian Noise <<<')
+            epsilon = np.random.multivariate_normal([0] * args.d, Sigma_truth, size=n_samples)
+        elif args.e == "t":
+            print(f'>>> Generating Data with t-distributed Noise <<<')
+            epsilon, modified_Sigma = sample_multivariate_t(n_samples, Sigma_truth)
+            Sigma_truth = modified_Sigma
+        elif args.e == "gamma":
+            print(f'>>> Generating Data with Correlated Gamma Noise <<<')
+            epsilon, modified_Sigma = sample_multivariate_gamma(
+                n_samples, Sigma_truth, shape=2.0
+            )
+            Sigma_truth = modified_Sigma
+
+        Sigma_truth = torch.tensor(Sigma_truth)
+        epsilon = torch.tensor(epsilon)
 
         if args.f == "MLP":
             print(f'>>> Generating Data with MLP <<<')
-            Sigma_truth = generate_covariance(A_bidir, seed=args.s)
-            epsilon = np.random.multivariate_normal([0] * args.d, Sigma_truth, size=n_samples)
-            Sigma_truth = torch.tensor(Sigma_truth)
-            epsilon = torch.tensor(epsilon)
             dims=[args.d, 100, 1]
             fc1, fc2, mask = generate_layers(args.d, dims, admg, seed = args.s)
             X_truth = generate_from_epsilon(dims, epsilon, fc1, fc2, mask, parents, order).detach()
@@ -643,10 +794,6 @@ if __name__ == "__main__":
             X = X_truth - epsilon
         elif args.f == "func":
             print(f'>>> Generating Data with Explicit Functions <<<')
-            Sigma_truth = generate_covariance(A_bidir, seed=args.s)
-            epsilon = np.random.multivariate_normal([0] * args.d, Sigma_truth, size=n_samples)
-            Sigma_truth = torch.tensor(Sigma_truth)
-            epsilon = torch.tensor(epsilon)
             edge_func_name, edge_weight = sample_edge_mechanisms(parents)
             X_truth = generate_from_func(epsilon, parents, order, edge_func_name, edge_weight).detach()
             J = vmap(jacrev(lambda x: g_single(x, parents, order, edge_func_name, edge_weight)))(X_truth)    # shape [n_samples, d, d]
